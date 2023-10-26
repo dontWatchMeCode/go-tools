@@ -4,17 +4,22 @@ import (
 	"fmt"
 
 	"github.com/dontWatchMeCode/go-tools/crawler"
+	"github.com/dontWatchMeCode/go-tools/utils"
 	"github.com/pterm/pterm"
 )
 
-func main() {
-	options := []struct {
-		text     string
-		function func()
-	}{
+type option struct {
+	text     string
+	function func()
+}
+
+var (
+	options = []option{
 		{"Crawl page", crawler.Start},
 	}
+)
 
+func main() {
 	handlerFuncs := make(map[string]func())
 	for _, option := range options {
 		handlerFuncs[option.text] = option.function
@@ -25,7 +30,8 @@ func main() {
 		textOptions[i] = option.text
 	}
 
-	result, _ := pterm.DefaultInteractiveSelect.WithOptions(textOptions).Show("Please select a function")
+	result, _ := pterm.DefaultInteractiveSelect.WithOptions(textOptions).WithOnInterruptFunc(utils.Exit).Show("Please select a function")
+
 	if handlerFunc, exists := handlerFuncs[result]; exists {
 		handlerFunc()
 	} else {

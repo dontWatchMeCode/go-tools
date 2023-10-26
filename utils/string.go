@@ -1,17 +1,19 @@
-package crawler
+package utils
 
 import (
-	"hash/fnv"
+	"encoding/hex"
 	"strings"
+
+	"golang.org/x/crypto/sha3"
 )
 
-func hash(s string) int {
-	h := fnv.New32a()
+func Hash(s string) string {
+	h := sha3.New256()
 	h.Write([]byte(s))
-	return int(h.Sum32())
+	return hex.EncodeToString(h.Sum(nil))
 }
 
-func removeHttpPrefix(s string) string {
+func RemoveHttpPrefix(s string) string {
 	if strings.HasPrefix(s, "https://") {
 		return s[len("https://"):]
 	}

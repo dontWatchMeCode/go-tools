@@ -9,10 +9,16 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dontWatchMeCode/go-tools/utils"
 	"github.com/gocolly/colly/v2"
 	"github.com/gocolly/colly/v2/queue"
 	"github.com/pterm/pterm"
 )
+
+type urlWithStatus struct {
+	url    string
+	status int
+}
 
 var (
 	urlChannel   = make(chan urlWithStatus)
@@ -20,11 +26,6 @@ var (
 	errorCount   = 0
 	isDone       = false
 )
-
-type urlWithStatus struct {
-	url    string
-	status int
-}
 
 func Start() {
 	initialUrl := getInputURL()
@@ -37,7 +38,7 @@ func Start() {
 }
 
 func getInputURL() string {
-	result, _ := pterm.DefaultInteractiveTextInput.Show("URL")
+	result, _ := pterm.DefaultInteractiveTextInput.WithOnInterruptFunc(utils.Exit).Show("URL")
 
 	_, err := url.ParseRequestURI(result)
 	if err != nil {
@@ -55,7 +56,7 @@ func runCrawler(initialUrl string) {
 		Timeout:   30 * time.Second,
 	}
 
-	c := colly.NewCollector(colly.AllowedDomains(removeHttpPrefix(initialUrl)))
+	c := colly.NewCollector(colly.AllowedDomains(utils.RemoveHttpPrefix(initialUrl)))
 	c.SetClient(httpClient)
 
 	q, _ := queue.New(10, &queue.InMemoryQueueStorage{MaxSize: 10000})
