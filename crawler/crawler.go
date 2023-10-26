@@ -1,13 +1,16 @@
 package crawler
 
 import (
+	"crypto/tls"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 
-	"github.com/gocolly/colly"
-	"github.com/gocolly/colly/queue"
+	"github.com/gocolly/colly/v2"
+	"github.com/gocolly/colly/v2/queue"
 	"github.com/pterm/pterm"
 )
 
@@ -46,8 +49,17 @@ func getInputURL() string {
 }
 
 func runCrawler(initialUrl string) {
-	c := colly.NewCollector()
+	transport := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
+	httpClient := &http.Client{
+		Transport: transport,
+		Timeout:   30 * time.Second,
+	}
+
+	c := colly.NewCollector(colly.AllowedDomains(removeHttpPrefix(initialUrl)))
+	c.SetClient(httpClient)
+
 	q, _ := queue.New(10, &queue.InMemoryQueueStorage{MaxSize: 10000})
+
 	var mu sync.Mutex
 
 	c.OnScraped(func(r *colly.Response) {
@@ -81,7 +93,7 @@ func runCrawler(initialUrl string) {
 			return
 		}
 		if strings.HasPrefix(url, initialUrl) {
-			q.AddURL(url)
+			q.AddURL(strings.TrimRight(url, "/"))
 		}
 	})
 
@@ -112,7 +124,7 @@ func displayResults() {
 		}
 
 		for _, msg := range data {
-			str += fmt.Sprint(msg.status) + " - " + msg.url + "\n"
+			str += fmt.Sprintf("%d - %s \n", msg.status, msg.url)
 		}
 
 		str += fmt.Sprintf("\n-> requests: %d", requestCount)
