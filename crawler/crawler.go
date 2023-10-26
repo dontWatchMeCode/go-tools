@@ -5,36 +5,50 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/dontWatchMeCode/go-tools/utils"
 	"github.com/gocolly/colly/v2"
 	"github.com/gocolly/colly/v2/queue"
+	cmap "github.com/orcaman/concurrent-map/v2"
 	"github.com/pterm/pterm"
 )
 
-type urlWithStatus struct {
-	url    string
-	status int
-}
+var done = false
 
-var (
-	urlChannel   = make(chan urlWithStatus)
-	requestCount = 0
-	errorCount   = 0
-	isDone       = false
-)
+var statusMap = cmap.New[int]()
+var sourceMap = cmap.New[string]()
+
+var logFile *os.File
 
 func Start() {
+	if file, err := createTempLogFile(); err == nil {
+		logFile = file
+		defer logFile.Close()
+		defer os.Remove(logFile.Name())
+	}
+
 	initialUrl := getInputURL()
 	if initialUrl == "" {
 		return
 	}
 
-	go runCrawler(initialUrl)
-	displayResults()
+	go renderInfoDisplay(initialUrl)
+	runCrawler(initialUrl)
+}
+
+func createTempLogFile() (*os.File, error) {
+	fileName := fmt.Sprintf("dontWatchMeCode-go-tools-crawl-%d.csv", time.Now().Unix())
+	tempFilePath := filepath.Join("/tmp", fileName)
+
+	file, err := os.OpenFile(tempFilePath, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0644)
+	if err != nil {
+		return nil, err
+	}
+	return file, nil
 }
 
 func getInputURL() string {
@@ -59,87 +73,90 @@ func runCrawler(initialUrl string) {
 	c := colly.NewCollector(colly.AllowedDomains(utils.RemoveHttpPrefix(initialUrl)))
 	c.SetClient(httpClient)
 
-	q, _ := queue.New(10, &queue.InMemoryQueueStorage{MaxSize: 10000})
-
-	var mu sync.Mutex
+	q, _ := queue.New(100, &queue.InMemoryQueueStorage{})
 
 	c.OnScraped(func(r *colly.Response) {
-		mu.Lock()
-		defer mu.Unlock()
-
-		requestCount++
-		urlChannel <- urlWithStatus{
-			url:    r.Request.URL.String(),
-			status: r.StatusCode,
-		}
+		logUrl(r.Request.URL.String(), r.StatusCode)
+		statusMap.Set(r.Request.URL.String(), r.StatusCode)
 	})
 
 	c.OnError(func(r *colly.Response, err error) {
-		mu.Lock()
-		defer mu.Unlock()
-
-		errorCount++
-		urlChannel <- urlWithStatus{
-			url:    r.Request.URL.String(),
-			status: r.StatusCode,
-		}
+		logUrl(r.Request.URL.String(), r.StatusCode)
+		statusMap.Set(r.Request.URL.String(), r.StatusCode)
 	})
 
 	c.OnHTML("a[href]", func(e *colly.HTMLElement) {
-		mu.Lock()
-		defer mu.Unlock()
-
 		url := e.Request.AbsoluteURL(e.Attr("href"))
-		if url == "" {
-			return
+		url = strings.TrimRight(url, "/")
+
+		if url != "" {
+			sourceMap.Set(url, e.Request.URL.String())
+			q.AddURL(url)
 		}
-		if strings.HasPrefix(url, initialUrl) {
-			q.AddURL(strings.TrimRight(url, "/"))
-		}
+
+		go func() {
+			if !strings.HasPrefix(url, initialUrl) {
+				if statusMap.Has(url) {
+					return
+				}
+
+				statusMap.Set(url, -1)
+
+				getRequest, err := httpClient.Get(url)
+				if err != nil {
+					return
+				}
+
+				logUrl(url, getRequest.StatusCode)
+				statusMap.Set(url, getRequest.StatusCode)
+			}
+		}()
 	})
 
-	go func() {
-		q.AddURL(initialUrl)
-		q.Run(c)
-		c.Wait()
-		isDone = true
-	}()
+	q.AddURL(initialUrl)
+	q.Run(c)
+	c.Wait()
+
+	done = true
 }
 
-func displayResults() {
-	limit := 5
-	data := []urlWithStatus{}
+func logUrl(url string, status int) {
+	source, ok := sourceMap.Get(url)
+	if !ok {
+		source = ""
+	}
+
+	logFile.WriteString(fmt.Sprintf("%d|%s|%s\n", status, url, source))
+}
+
+func renderInfoDisplay(initialUrl string) {
 	area, _ := pterm.DefaultArea.Start()
 
 	for {
-		str := "\n"
+		str := fmt.Sprintf("crawling: %s\n", initialUrl)
+		str += fmt.Sprintf("logfile: %s\n", logFile.Name())
 
-		msg, ok := <-urlChannel
-		if ok {
-			if len(data) >= limit {
-				data = data[1:]
+		count := 0
+		errors := 0
+
+		for status := range statusMap.Keys() {
+			count++
+			if status >= 200 && status <= 399 {
+				errors++
 			}
-			data = append(data, msg)
-		} else {
-			break
 		}
 
-		for _, msg := range data {
-			str += fmt.Sprintf("%d - %s \n", msg.status, msg.url)
-		}
+		str += pterm.DefaultBox.Sprintf("error: %d\ncrawled: %d", errors, count)
 
-		str += fmt.Sprintf("\n-> requests: %d", requestCount)
-		str += fmt.Sprintf("\n-> errors: %d", errorCount)
 		str += "\n"
 
 		area.Update(str)
 
-		if isDone {
-			area.Stop()
+		time.Sleep(250 * time.Millisecond)
+
+		if done {
 			break
 		}
 	}
-
-	fmt.Println()
-	pterm.Success.Println("Done crawling!")
+	area.Stop()
 }
