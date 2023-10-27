@@ -15,7 +15,7 @@ type option struct {
 
 var (
 	options = []option{
-		{"Crawl page", func() { crawler.Start() }},
+		{"Crawl page", func() { crawler.Start("") }},
 	}
 )
 

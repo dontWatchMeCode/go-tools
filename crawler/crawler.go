@@ -38,8 +38,11 @@ type returnValues struct {
 	success    bool
 }
 
-func Start() returnValues {
-	initialUrl := getInputURL()
+func Start(initialUrl string) returnValues {
+	if initialUrl == "" {
+		initialUrl = getInputURL()
+	}
+
 	logPrefix = getFileNamePrefix(initialUrl)
 
 	if initialUrl == "" {
