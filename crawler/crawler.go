@@ -28,12 +28,24 @@ var logFiles = make(map[string]*os.File)
 var logFileMu sync.Mutex
 var logPrefix = ""
 
-func Start() {
+type returnValues struct {
+	statusMap  map[string]int
+	sourceMap  map[string]string
+	initialUrl string
+	success    bool
+}
+
+func Start() returnValues {
 	initialUrl := getInputURL()
 	logPrefix = getFileNamePrefix(initialUrl)
 
 	if initialUrl == "" {
-		return
+		return returnValues{
+			statusMap:  statusMap.Items(),
+			sourceMap:  sourceMap.Items(),
+			initialUrl: initialUrl,
+			success:    false,
+		}
 	}
 
 	go renderInfoDisplay(initialUrl)
@@ -46,6 +58,13 @@ func Start() {
 		}
 
 		file.Close()
+	}
+
+	return returnValues{
+		statusMap:  statusMap.Items(),
+		sourceMap:  sourceMap.Items(),
+		initialUrl: initialUrl,
+		success:    true,
 	}
 }
 
