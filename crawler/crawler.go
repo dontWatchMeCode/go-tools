@@ -23,10 +23,13 @@ var done = false
 
 var statusMap = cmap.New[int]()
 var sourceMap = cmap.New[string]()
+var contentTypeMap = cmap.New[string]()
 
 var logFiles = make(map[string]*os.File)
 var logFileMu sync.Mutex
 var logPrefix = ""
+
+var wg sync.WaitGroup
 
 type returnValues struct {
 	statusMap  map[string]int
@@ -107,11 +110,11 @@ func runCrawler(initialUrl string) {
 	q, _ := queue.New(50, &queue.InMemoryQueueStorage{})
 
 	c.OnScraped(func(r *colly.Response) {
-		processUrl(httpClient, r.Request.URL.String(), r.StatusCode)
+		processUrl(httpClient, r.Request.URL.String(), r.StatusCode, r.Headers.Get("Content-Type"))
 	})
 
 	c.OnError(func(r *colly.Response, err error) {
-		processUrl(httpClient, r.Request.URL.String(), r.StatusCode)
+		processUrl(httpClient, r.Request.URL.String(), r.StatusCode, r.Headers.Get("Content-Type"))
 	})
 
 	c.OnHTML("a[href]", func(e *colly.HTMLElement) {
@@ -125,31 +128,24 @@ func runCrawler(initialUrl string) {
 			q.AddURL(urlVal)
 		}
 
+		wg.Add(1)
 		go func() {
+			defer wg.Done()
+
 			if !strings.HasPrefix(urlVal, initialUrl) {
 				if statusMap.Has(urlVal) {
 					return
 				}
 
 				statusMap.Set(urlVal, 0)
-
-				_, err := url.ParseRequestURI(urlVal)
-				if err != nil {
-					return
-				}
-
-				getRequest, err := httpClient.Get(urlVal)
-				if err != nil {
-					return
-				}
-
-				processUrl(httpClient, urlVal, getRequest.StatusCode)
+				processUrl(httpClient, urlVal, 0, "")
 			}
 		}()
 	})
 
 	q.AddURL(initialUrl)
 	q.Run(c)
+	wg.Wait()
 	c.Wait()
 
 	done = true
@@ -168,36 +164,46 @@ func writeToFiles(initialUrl string) {
 			continue
 		}
 
+		contentType, ok := contentTypeMap.Get(url)
+		if !ok {
+			contentType = ""
+		}
+
 		logStringToFileCreateIfNotExists(
 			logPrefix+"-full.csv",
-			fmt.Sprintf("%d|%s|%s|\n", status, url, source),
+			fmt.Sprintf("%d|%s|%s|%s|\n", status, contentType, url, source),
 		)
 
 		logStringToFileCreateIfNotExists(
 			logPrefix+"-"+firstStatusNumber+"xx.csv",
-			fmt.Sprintf("%d|%s|%s|\n", status, url, source),
+			fmt.Sprintf("%d|%s|%s|%s|\n", status, contentType, url, source),
 		)
 
-		if !strings.HasPrefix(url, initialUrl) {
+		if !strings.HasPrefix(url, initialUrl) && strings.HasPrefix(url, "http") {
 			logStringToFileCreateIfNotExists(
 				logPrefix+"-external.csv",
-				fmt.Sprintf("%d|%s|%s|\n", status, url, source),
+				fmt.Sprintf("%d|%s|%s|%s|\n", status, contentType, url, source),
 			)
 		}
 	}
 }
 
-func processUrl(httpClient *http.Client, url string, status int) {
-	if status == 0 {
-		r, err := httpClient.Head(url)
-		if err != nil {
-			panic(r)
-		}
-		status = r.StatusCode
-	}
+func processUrl(httpClient *http.Client, url string, status int, contentType string) {
+	contentTypeMap.Set(url, contentType)
 
-	logUrl(url, status)
-	statusMap.Set(url, status)
+	if status == 0 || contentType == "" {
+		r, err := httpClient.Get(url)
+		if err == nil {
+			status = r.StatusCode
+			contentTypeMap.Set(url, r.Header.Get("Content-Type"))
+		}
+
+		logUrl(url, status)
+		statusMap.Set(url, status)
+	} else {
+		logUrl(url, status)
+		statusMap.Set(url, status)
+	}
 }
 
 func logUrl(url string, status int) {
@@ -206,9 +212,14 @@ func logUrl(url string, status int) {
 		source = ""
 	}
 
+	contentType, ok := contentTypeMap.Get(url)
+	if !ok {
+		contentType = ""
+	}
+
 	logStringToFileCreateIfNotExists(
 		logPrefix+"-temp.csv",
-		fmt.Sprintf("%d|%s|%s|\n", status, url, source),
+		fmt.Sprintf("%d|%s|%s|%s|\n", status, contentType, url, source),
 	)
 }
 
