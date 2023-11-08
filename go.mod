@@ -1,6 +1,6 @@
 module github.com/dontWatchMeCode/go-tools
 
-go 1.21.3
+go 1.21
 
 require (
 	github.com/gocolly/colly/v2 v2.1.0
